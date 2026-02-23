@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ static_version }}">
+</head>
+<body>
+    <div id="loader" class="loading-overlay">
+        <div class="bumpy-car">🚗</div>
+        <h2 style="font-family:'Fredoka One'; color:var(--blue);">Scanning Roads...</h2>
+    </div>
+
+    <div class="app-shell">
+        <div class="header"><h1>AI Road Pothole Detector</h1></div>
+        <div class="card">
+            <video id="camera" autoplay playsinline style="width:100%; border-radius:20px; background:#000;"></video>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:10px;">
+                <button class="btn btn-blue" onclick="capImg()">📸 Capture</button>
+                <button id="recB" class="btn btn-blue" onclick="startR()">🎥 Record</button>
+                <button class="btn btn-outline" onclick="toggleCamera()">🔌 On/Off</button>
+                <button class="btn btn-outline" onclick="switchCam()">🔄 Switch</button>
+            </div>
+            <button id="subB" class="btn btn-blue" style="display:none; background:var(--dark-blue);" onclick="process()">🚀 Detect (<span id="qCount">0</span>)</button>
+        </div>
+        <div class="card">
+            <input type="file" id="fIn" multiple accept="image/*,video/*" class="btn btn-outline" style="padding:10px;">
+            <button class="btn btn-blue" onclick="uploadFiles()">📤 Submit Files</button>
+            <button class="btn btn-outline" onclick="window.location.href='/history'">📜 History</button>
+        </div>
+    </div>
+<script>
+let stream, queue = [], mode = "environment", mediaRecorder, recordedChunks = [];
+
+// Camera works only on HTTPS or localhost (required by browsers on mobile)
+const isSecure = location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+if (!isSecure) {
+    document.getElementById("camera").style.display = 'none';
+    var warning = document.createElement('div');
+    warning.style.cssText = 'padding:20px; background:#fee; border:2px solid #c00; border-radius:15px; margin:10px; color:#c00;';
+    warning.innerHTML = '⚠️ <strong>Camera needs HTTPS</strong><br>Use <strong>file upload</strong> below to add photos/videos.<br>After you deploy the app (e.g. Render/Railway), the site will use HTTPS and camera will work on mobile.';
+    document.querySelector('.card').prepend(warning);
+} else {
+    // On HTTPS: do not auto-start – mobile needs a user tap before camera can open
+    var hint = document.createElement('p');
+    hint.id = 'cameraHint';
+    hint.style.cssText = 'margin:10px 0; padding:12px; background:#e0f2fe; border-radius:12px; color:#0369a1; font-size:14px;';
+    hint.textContent = '📷 Tap "🔌 On/Off" to start camera (required on mobile).';
+    document.getElementById('camera').parentNode.insertBefore(hint, document.getElementById('camera').nextSibling);
+}
+
+async function toggleCamera() {
+    if (!isSecure) {
+        alert('Camera requires HTTPS. Use file upload instead.');
+        return;
+    }
+    var hint = document.getElementById('cameraHint');
+    try {
+        if(stream) { 
+            stream.getTracks().forEach(function(t) { t.stop(); }); 
+            stream = null; 
+            document.getElementById("camera").srcObject = null;
+            if (hint) hint.textContent = '📷 Tap "🔌 On/Off" to start camera again.';
+        } else { 
+            stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: mode, width: { ideal: 1280 }, height: { ideal: 720 } },
+                audio: false
+            }); 
+            document.getElementById("camera").srcObject = stream; 
+            if (hint) hint.style.display = 'none';
+        }
+    } catch(err) {
+        console.error('Camera error:', err);
+        if (hint) hint.style.display = '';
+        if (hint) hint.innerHTML = '❌ Camera denied or not available. Allow camera in browser settings or use <strong>file upload</strong> below.';
+        alert('Camera access denied or not available. Use file upload below.');
+    }
+}
+
+function switchCam() { 
+    mode = mode === "user" ? "environment" : "user"; 
+    if(stream) {
+        toggleCamera().then(() => setTimeout(toggleCamera, 100));
+    }
+}
+
+function capImg() {
+    if (!stream) {
+        alert('Please start camera first or use file upload.');
+        return;
+    }
+    const v = document.getElementById("camera");
+    if (!v.videoWidth) {
+        alert('Camera not ready. Please wait...');
+        return;
+    }
+    const c = document.createElement("canvas");
+    c.width = v.videoWidth; 
+    c.height = v.videoHeight;
+    c.getContext("2d").drawImage(v, 0, 0);
+    c.toBlob(b => { 
+        queue.push(new File([b], `c_${Date.now()}.jpg`)); 
+        document.getElementById("qCount").innerText = queue.length;
+        document.getElementById("subB").style.display = "flex";
+    }, 'image/jpeg');
+}
+
+function startR() {
+    if (!stream) {
+        alert('Please start camera first.');
+        return;
+    }
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+        document.getElementById("recB").textContent = '🎥 Record';
+        return;
+    }
+    recordedChunks = [];
+    try {
+        mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9' });
+        mediaRecorder.ondataavailable = e => { if(e.data.size > 0) recordedChunks.push(e.data); };
+        mediaRecorder.onstop = () => {
+            const blob = new Blob(recordedChunks, { type: 'video/webm' });
+            queue.push(new File([blob], `rec_${Date.now()}.webm`));
+            document.getElementById("qCount").innerText = queue.length;
+            document.getElementById("subB").style.display = "flex";
+            document.getElementById("recB").textContent = '🎥 Record';
+        };
+        mediaRecorder.start();
+        document.getElementById("recB").textContent = '⏹️ Stop';
+    } catch(err) {
+        console.error('Recording error:', err);
+        alert('Video recording not supported. Please use file upload.');
+    }
+}
+
+function uploadFiles() {
+    const files = document.getElementById('fIn').files;
+    if (files.length === 0) {
+        alert('Please select files first.');
+        return;
+    }
+
+    // Submit immediately (especially important for uploaded videos)
+    queue = [];
+    for (let f of files) queue.push(f);
+    document.getElementById("qCount").innerText = queue.length;
+    document.getElementById("subB").style.display = "flex";
+
+    // Clear input so re-selecting the same file works
+    document.getElementById('fIn').value = '';
+
+    // Auto-start detection after upload click
+    process();
+}
+
+// Default location (Hyderabad) when permission denied or unavailable – map and address always show
+var DEFAULT_LAT = 17.3850;
+var DEFAULT_LON = 78.4867;
+
+function process() {
+    if (queue.length === 0) {
+        alert('Please capture images or upload files first.');
+        return;
+    }
+    document.getElementById('loader').style.display = 'flex';
+    var fd = new FormData();
+    queue.forEach(function(f) { fd.append('images', f); });
+
+    function submitWithLocation(lat, lon) {
+        fd.append('lat', String(lat));
+        fd.append('lon', String(lon));
+        fetch('/detect_multiple', { method: 'POST', body: fd })
+            .then(function(r) { return r.text(); })
+            .then(function(h) {
+                document.open();
+                document.write(h);
+                document.close();
+            })
+            .catch(function(err) {
+                console.error('Upload error:', err);
+                alert('Upload failed. Please try again.');
+                document.getElementById('loader').style.display = 'none';
+            });
+    }
+
+    var opts = { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 };
+    navigator.geolocation.getCurrentPosition(
+        function(p) {
+            submitWithLocation(p.coords.latitude, p.coords.longitude);
+        },
+        function() {
+            submitWithLocation(DEFAULT_LAT, DEFAULT_LON);
+        },
+        opts
+    );
+}
+
+
+
+// Do not auto-start camera: on mobile, browser requires a user tap first
+</script>
+</body>
+</html>
