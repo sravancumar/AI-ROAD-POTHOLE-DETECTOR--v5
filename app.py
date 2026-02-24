@@ -1,5 +1,6 @@
 from flask import Flask, request, render_template
-from ultralytics import YOLO
+import onnxruntime as ort
+import numpy as np
 from geopy.geocoders import Nominatim
 import os, uuid, cv2
 import time
@@ -13,7 +14,7 @@ app.config['STATIC_VERSION'] = int(time.time())
 def inject_static_version():
     return dict(static_version=app.config['STATIC_VERSION'])
 
-model = YOLO("pothole_guard.onnx")
+session = ort.InferenceSession("pothole_guard.onnx")
 
 # Use absolute paths to ensure it works on Windows and Vercel
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
